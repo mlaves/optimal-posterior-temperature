@@ -18,7 +18,7 @@ under review
 ## Contact
 
 Max-Heinrich Laves  
-[laves@imes.uni-hannover.de](mailto:max.laves@tuhh.de)  
+[max.laves@tuhh.de](mailto:max.laves@tuhh.de)  
 [@MaxLaves](https://twitter.com/MaxLaves)
 
 Institute of Medical Technology and Intelligent Systems  

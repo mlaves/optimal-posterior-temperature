@@ -67,24 +67,24 @@ def run(
 
     # denoising
     if img == 0:
-        fname = '../NORMAL-4951060-8.png'
+        fname = 'data/NORMAL-4951060-8.png'
         imsize = (256, 256)
     elif img == 1:
-        fname = '../BACTERIA-1351146-0006.png'
+        fname = 'data/BACTERIA-1351146-0006.png'
         imsize = (256, 256)
     elif img == 2:
-        fname = '../081_HC.png'
+        fname = 'data/081_HC.png'
         imsize = (256, 256)
     elif img == 3:
-        fname = '../CNV-9997680-30.png'
+        fname = 'data/CNV-9997680-30.png'
         imsize = (256, 256)
     elif img == 4:
-        fname = '../VIRUS-9815549-0001.png'
+        fname = 'data/VIRUS-9815549-0001.png'
         imsize = (256, 256)
     else:
         assert False
 
-    if fname == '../NORMAL-4951060-8.jpeg':
+    if fname == 'data/NORMAL-4951060-8.jpeg':
 
         # Add Gaussian noise to simulate speckle
         img_pil = crop_image(get_image(fname, imsize)[0], d=32)
@@ -92,7 +92,7 @@ def run(
         p_sigma = 0.1
         img_noisy_pil, img_noisy_np = get_noisy_image_gaussian(img_np, p_sigma)
 
-    elif fname in ['../BACTERIA-1351146-0006.png', '../VIRUS-9815549-0001.png']:
+    elif fname in ['data/BACTERIA-1351146-0006.png', 'data/VIRUS-9815549-0001.png']:
 
         # Add Poisson noise to simulate low dose X-ray
         img_pil = crop_image(get_image(fname, imsize)[0], d=32)
@@ -102,7 +102,7 @@ def run(
         p_sigma = 0.1
         img_noisy_pil, img_noisy_np = get_noisy_image_gaussian(img_np, p_sigma)
 
-    elif fname == '../081_HC.png':
+    elif fname == 'data/081_HC.png':
 
         # Add Gaussian noise to simulate speckle
         img_pil = crop_image(get_image(fname, imsize)[0], d=32)
@@ -110,7 +110,7 @@ def run(
         p_sigma = 0.1
         img_noisy_pil, img_noisy_np = get_noisy_image_gaussian(img_np, p_sigma)
 
-    elif fname == '../CNV-9997680-30.png':
+    elif fname == 'data/CNV-9997680-30.png':
 
         # Add Gaussian noise to simulate speckle
         img_pil = crop_image(get_image(fname, imsize)[0], d=32)

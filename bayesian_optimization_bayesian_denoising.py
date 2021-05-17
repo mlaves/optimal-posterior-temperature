@@ -374,8 +374,7 @@ class ExactGPModel(gpytorch.models.ExactGP):
     def __init__(self, train_x, train_y, likelihood):
         super().__init__(train_x, train_y, likelihood)
         self.mean_module = gpytorch.means.ConstantMean(
-            prior=gpytorch.priors.NormalPrior(torch.tensor([15., 15.]),
-                                              torch.tensor([4., 4.]))
+            prior=gpytorch.priors.NormalPrior(15., 4.)
         )
         self.covar_module = gpytorch.kernels.ScaleKernel(
             gpytorch.kernels.RBFKernel()
@@ -427,20 +426,59 @@ noise: {gp.likelihood.noise[0].item():.4f}')
     return gp, likelihood
 
 
-def upper_confidence_bound(gp, X_, kappa=2):
-    # acquisition function
-    pred = gp(X_)
+def expected_improvement(gp: gpytorch.models.ExactGP,
+                         X: torch.Tensor,
+                         X_train: torch.Tensor
+                         ) -> torch.Tensor:
+    '''
+    Computes the EI at points for the parameter space based on
+    cost samples using a Gaussian process surrogate model.
+    Args:
+        model: surrogate GP model
+        params_space: Parameter space at which EI shall be computed (m x d).
+        params_samples: already evaluated parameters (n x d)
+    Returns:
+        Expected improvements for paramter space.
+    '''
+    pred = gp(X)
+    pred_sample = gp(X_train)
+
+    mu, sigma = pred.mean, pred.variance.clamp_min(1e-9).sqrt()
+    mu_sample = pred_sample.mean
+
+    sigma = sigma.reshape(-1, 1)
+
+    imp = mu - mu_sample.max()
+    u = imp.reshape(-1, 1) / sigma
+    normal = torch.distributions.Normal(torch.zeros_like(u), torch.ones_like(u))
+    ucdf = normal.cdf(u)
+    updf = torch.exp(normal.log_prob(u))
+    ei = sigma * (updf + u * ucdf)
+
+    return ei.clamp_min(0)
+
+
+def upper_confidence_bound(gp, X, kappa=2):
+    pred = gp(X)
     return pred.mean + kappa * pred.variance.sqrt()
 
 
-def find_candidates(gp, X_):
+def acquisition_fun(gp, X, X_train, acq_fn, *args):
+    assert acq_fn in ['ei', 'ucb']
+    gp.eval()
+    if acq_fn == 'ei':
+        return expected_improvement(gp, X, X_train)
+    elif acq_fn == 'ucb':
+        return upper_confidence_bound(gp, X, *args)
+
+
+def find_candidates(gp, X_, samples, acq_fn='ei'):
     with torch.no_grad():
-        acq = upper_confidence_bound(gp, X_)
+        acq = acquisition_fun(gp, X_, samples, acq_fn)
 
     acq = acq.cpu().numpy().reshape(100, 100)
-    peaks = peak_local_max(acq)
-    global_max = np.array(
-        np.unravel_index(np.argmax(acq, axis=None), acq.shape)).reshape(1, -1)
+    peaks = peak_local_max(acq, min_distance=5, threshold_rel=0.1, num_peaks=4)
+    global_max = np.array(np.unravel_index(np.argmax(acq, axis=None), acq.shape)).reshape(1, -1)
     peaks = np.append(peaks, global_max, axis=0)
     peaks = np.unique(peaks, axis=0)
     peaks = np.ravel_multi_index(peaks.transpose(), acq.shape)
@@ -449,7 +487,7 @@ def find_candidates(gp, X_):
 
     constraint = constraints.interval(0, 1)
     candidates = []
-    expected_impr = []
+    expected_improvement = []
 
     for i in range(len(X_init[:4])):
         unconstrained_X_init = transform_to(constraint).inv(X_init[i].unsqueeze(0))
@@ -459,17 +497,17 @@ def find_candidates(gp, X_):
         def closure():
             minimizer.zero_grad()
             x = transform_to(constraint)(unconstrained_X)
-            y = -upper_confidence_bound(gp, x)
+            y = -acquisition_fun(gp, x, samples, acq_fn)
             autograd.backward(unconstrained_X, autograd.grad(y, unconstrained_X))
             return y
 
         minimizer.step(closure)
         X = transform_to(constraint)(unconstrained_X)
 
-        expected_impr.append(upper_confidence_bound(gp, X).detach().cpu().item())
+        expected_improvement.append(acquisition_fun(gp, X, samples, acq_fn).item())
         candidates.append(X.detach().cpu())
 
-    return candidates, expected_impr
+    return candidates, expected_improvement, acq
 
 
 def normalize_X(X_unnorm, beta_logbounds, tau_logbounds):
@@ -496,7 +534,7 @@ def unnormalize_X(X_norm, beta_logbounds, tau_logbounds):
 
 def f(idx, queue, candidate, device):
     res = run(beta=candidate[0], tau=candidate[1], index=idx, device=device,
-              img=1, seed=1, num_iter=50000, lr=2e-3, input_depth=16, save=True, save_path='/opt/laves/logs')
+              img=1, seed=1, num_iter=50000, lr=2e-3, input_depth=16, save=True, save_path='/opt/laves/bo_logs')
     queue.put((candidate, res))
 
 
@@ -573,14 +611,14 @@ if __name__ == '__main__':
                 X_[:, 1]
             ]).transpose(1, 0)
             X_test = normalize_X(X_test, beta_logbounds, tau_logbounds)
-            candidates, expected_improvement = find_candidates(gp, X_test)
+            candidates, exp_imp, acq = find_candidates(gp, X_test, X_train)
 
             candidates = torch.cat(candidates).cpu()
             candidates = torch.unique(candidates, dim=0)
             candidates = unnormalize_X(candidates, beta_logbounds, tau_logbounds).numpy()
 
             pred = gp(X_test)
-            acq = upper_confidence_bound(gp, X_test)
+            # acq = upper_confidence_bound(gp, X_test)
 
         fig1, ax1 = plt.subplots()
         ln11 = ax1.contourf(XX_lr.cpu().numpy(), XX_wd.cpu().numpy(),
@@ -616,7 +654,7 @@ if __name__ == '__main__':
 
         fig3, ax3 = plt.subplots()
         ln31 = ax3.contourf(XX_lr.cpu().numpy(), XX_wd.cpu().numpy(),
-                            acq.cpu().reshape(100, 100).numpy())
+                            acq.reshape(100, 100))
         ln32 = ax3.plot(candidates[:, 0], candidates[:, 1], 'g.', label='candidates')
         ax3.set_title(f"{runs_num} acq_fun")
         ax3.set_xlabel('beta')
@@ -632,10 +670,10 @@ if __name__ == '__main__':
         fig4, ax4 = plt.subplots(subplot_kw={"projection": "3d"})
         ln41 = ax4.plot_surface(XX_lr.log10().cpu().numpy(),
                                 XX_wd.log10().cpu().numpy(),
-                                acq.cpu().reshape(100, 100).numpy(),
+                                acq.reshape(100, 100),
                                 cmap=cm.jet,
                                 linewidth=0, antialiased=False)
-        ax4.plot(np.log10(candidates[:, 0]), np.log10(candidates[:, 1]), expected_improvement, 'gx')
+        ax4.plot(np.log10(candidates[:, 0]), np.log10(candidates[:, 1]), exp_imp, 'gx')
         ax4.set_title(f"{runs_num} acq_fun")
         fig4.tight_layout()
         fig4.savefig(f'{bo_out_path}/{runs_num}_fig4.pdf', bbox_inches='tight')
@@ -648,9 +686,9 @@ if __name__ == '__main__':
             pred=pred.mean.cpu().reshape(100, 100).numpy(),
             observed_X=np.array(X),
             observed_Y=np.array(Y),
-            expected_improvement=np.array(expected_improvement),
+            expected_improvement=np.array(exp_imp),
             confidence=pred.confidence_region()[1].detach().cpu().reshape(100, 100) \
                        - pred.confidence_region()[0].detach().cpu().reshape(100, 100),
-            acq=acq.cpu().reshape(100, 100).numpy(),
+            acq=acq.reshape(100, 100),
             candidates=candidates
         )
